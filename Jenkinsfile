@@ -72,6 +72,15 @@ pipeline {
       steps {
         sh '''
           cd infra
+          
+          # Create stable temp + plugin cache dirs for Terraform (avoid /tmp issues)
+          mkdir -p "$WORKSPACE/.tmp" "$HOME/.terraform.d/plugin-cache"
+          export TMPDIR="$WORKSPACE/.tmp"
+          export TF_PLUGIN_CACHE_DIR="$HOME/.terraform.d/plugin-cache"
+
+          # If a partial provider download existed, clean it up
+          rm -rf .terraform/providers
+
           terraform -version
           terraform init -input=false
           terraform validate
