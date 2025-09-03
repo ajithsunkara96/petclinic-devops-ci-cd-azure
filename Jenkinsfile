@@ -6,40 +6,29 @@ pipeline {
     disableConcurrentBuilds()
   }
 
-  tools {
-    // Use the Maven you added under Manage Jenkins → Tools (named "maven")
-    maven 'maven'
-  }
+  // No 'tools { maven ... }' needed since we use ./mvnw
 
   environment {
-    // Keep names consistent with your Terraform files
-    LOCATION   = 'canadacentral'
-    RG_NAME    = 'project7'                  // existing RG
-    PLAN_NAME  = 'project7-service-plan'
-    APP_NAME   = 'project7-web-app-ajs'      // must be globally unique; change if name-in-use error
-    SKU_NAME   = 'S1'
+    LOCATION  = 'canadacentral'
+    RG_NAME   = 'project7'                // existing RG
+    PLAN_NAME = 'project7-service-plan'
+    APP_NAME  = 'project7-web-app-ajs'    // must be globally unique; change if needed
+    SKU_NAME  = 'S1'
   }
 
-  triggers {
-    // The job config is already set to "GitHub hook trigger for GITScm polling"
-    // This is just for clarity; you can keep it here too.
-    githubPush()
-  }
+  triggers { githubPush() }
 
   stages {
-
     stage('Checkout') {
-      steps {
-        // Since the job is "Pipeline script from SCM", this refers to the same repo/branch
-        checkout scm
-      }
+      steps { checkout scm }
     }
 
-    stage('Build with Maven') {
+    stage('Build with Maven Wrapper') {
       steps {
         sh '''
-          mvn -v
-          mvn -ntp clean package -DskipTests -Dcheckstyle.skip=true
+          chmod +x mvnw
+          ./mvnw -v || true
+          ./mvnw -ntp clean package -DskipTests -Dcheckstyle.skip=true
         '''
       }
     }
@@ -67,14 +56,13 @@ pipeline {
             az login --service-principal -u "$AZ_CLIENT_ID" -p "$AZ_CLIENT_SECRET" --tenant "$AZ_TENANT_ID"
             az account set --subscription "$AZ_SUBSCRIPTION_ID"
 
-            # Export for Terraform (AzureRM provider & backend)
+            # For Terraform (AzureRM provider & backend)
             export ARM_CLIENT_ID="$AZ_CLIENT_ID"
             export ARM_CLIENT_SECRET="$AZ_CLIENT_SECRET"
             export ARM_TENANT_ID="$AZ_TENANT_ID"
             export ARM_SUBSCRIPTION_ID="$AZ_SUBSCRIPTION_ID"
 
-            # Masked print for sanity
-            echo "Logged into Azure. SUBSCRIPTION set."
+            echo "Azure login OK and subscription set."
           '''
         }
       }
@@ -84,12 +72,6 @@ pipeline {
       steps {
         sh '''
           cd infra
-
-          # Optional: feed variables via tfvars (matches your main.tf defaults)
-          cat > run.auto.tfvars <<EOF
-          # Values here match your current configuration
-          EOF
-
           terraform -version
           terraform init -input=false
           terraform validate
@@ -107,7 +89,6 @@ pipeline {
           APP=$(terraform output -raw webapp_name || echo "${APP_NAME}")
           cd ..
 
-          # Deploy the built JAR to the Linux Web App (Java SE)
           az webapp deploy \
             --resource-group "$RG" \
             --name "$APP" \
@@ -121,15 +102,10 @@ pipeline {
   }
 
   post {
-    success {
-      echo '✅ Build, infra, and deployment completed successfully.'
-    }
-    failure {
-      echo '❌ Pipeline failed. Check the stage that errored for details.'
-    }
-    always {
-      // keep workspace clean between runs
-      cleanWs(deleteDirs: true, notFailBuild: true)
-    }
+    success { echo '✅ Build, infra, and deployment completed successfully.' }
+    failure { echo '❌ Pipeline failed. Check the stage that errored for details.' }
+    // cleanWs can fail if the workspace wasn’t allocated due to early errors.
+    // Re-enable after you get a clean successful run:
+    // always { cleanWs(deleteDirs: true, notFailBuild: true) }
   }
 }
